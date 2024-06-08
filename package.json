@@ -1,0 +1,16 @@
+{
+  "name": "authifyjs",
+  "version": "1.0.0",
+  "description": "AuthifyJS is a robust user authentication service designed for JavaScript applications, providing secure and efficient access control.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Cameron McConnell",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "express": "^4.19.2",
+    "mongodb": "^6.7.0"
+  }
+}
