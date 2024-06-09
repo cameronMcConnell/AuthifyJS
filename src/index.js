@@ -22,7 +22,12 @@ async function connectToMongoDBServer() {
     }
 }
 
-const collection = connectToMongoDBServer();
+let collection;
+connectToMongoDBServer().then((col) => {
+    collection = col;
+})
+
+app.use(express.json());
 
 app.post("/signup", async (req, res) => {
     try {
@@ -32,7 +37,7 @@ app.post("/signup", async (req, res) => {
         const existingUser = await collection.findOne({ username });
 
         if (existingUser) {
-            res.status(409).json({ error: "Username already exists" });
+            return res.status(409).json({ error: "Username already exists" });
         }
 
         const passwordHash = cryptoUtil.getPasswordHash(password);
@@ -43,15 +48,13 @@ app.post("/signup", async (req, res) => {
             username,
             passwordHash,
             token,
-            data: req.body["data"]
+            data: req.body.data
         }
 
         await collection.insert(user);
 
         res.status(201).json({ token });
-    } 
-    
-    catch (error) {
+    } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal Serer Error" });
     }
@@ -65,13 +68,13 @@ app.post("/login", async (req, res) => {
         const user = await collection.findOne({ username });
 
         if (!user) {
-            res.status(404).json({ error: "User not found" });
+            return res.status(404).json({ error: "User not found" });
         }
 
         const passwordHash = cryptoUtil.getPasswordHash(password);
 
         if (passwordHash !== user.passwordHash) {
-            res.status(401).json({ error: "Invalid password" });
+            return res.status(401).json({ error: "Invalid password" });
         }
 
         const token = cryptoUtil.generateRandomToken();
@@ -79,19 +82,51 @@ app.post("/login", async (req, res) => {
         await collection.updateOne({ username }, { $set: { token }});
 
         res.status(200).json({ token });
-    } 
-    
-    catch (error) {
+    } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error "});
     }
 })
 
 app.post("/forward", async (req, res) => {
+    try {
+        const token = req.body.token;
+        const url = req.body.url;
+        const method = req.body.method;
+        const data = req.body.data;
 
+        const existingUser = await collection.findOne({ token });
+
+        if (!existingUser) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        if (method === "GET") {
+            const forwardRes = await axios.get(url);
+
+            if (forwardRes.status === 200) {
+                return res.status(200).json(forwardRes.data);
+            }
+
+            res.status(forwardRes.status).json({ error: forwardRes.statusText });
+        }
+        else if (method === "POST") {
+            const forwardRes = await axios.post(url, data);
+
+            if (forwardRes.status === 200) {
+                return res.status(200).json(forwardRes.data);
+            }
+
+            res.status(forwardRes.status).json({ error: forwardRes.statusText });
+        }
+        else {
+            res.status(405).json({ error: "Method Not Allowed" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error "});
+    }
 })
-
-app.use(express.json());
 
 app.listen(port, async () => {
     console.log(`Listening on port ${port}`);
