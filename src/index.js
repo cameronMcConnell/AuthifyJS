@@ -1,21 +1,19 @@
 const express = require("express");
 const axios = require("axios");
-const MongoClient = require("mongodb");
+const { MongoClient } = require("mongodb");
 const CryptoUtil = require("./utils");
 
 const app = express();
 const port = process.env.PORT;
 
-const url = "mongodb://localhost:27017";
-const client = new MongoClient(url);
-const dbName = "AuthifyJS";
+const client = new MongoClient("mongodb://mongo:27017/AuthifyJS");
 
 const cryptoUtil = new CryptoUtil();
 
 const connectToMongoDBServer = async () => {
     try {
         await client.connect();
-        return client.db(dbName).collection("users");
+        return client.db("AuthifyJS").collection("users");
     } catch (error) {
         console.error(error);
         process.exit(1);
@@ -25,6 +23,7 @@ const connectToMongoDBServer = async () => {
 let collection;
 connectToMongoDBServer().then((col) => {
     collection = col;
+    console.log("Connected to collection users");
 });
 
 app.use(express.json());
@@ -51,7 +50,7 @@ app.post("/signup", async (req, res) => {
             data: req.body.data
         }
 
-        await collection.insert(user);
+        await collection.insertOne(user);
 
         res.status(201).json({ token });
     } catch (error) {
@@ -152,4 +151,4 @@ app.post("/change_password", async (req, res) => {
 
 app.listen(port, async () => {
     console.log(`Listening on port ${port}`);
-})
+});
