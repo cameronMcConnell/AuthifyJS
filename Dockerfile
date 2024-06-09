@@ -12,4 +12,7 @@ RUN npm install
 
 EXPOSE 9000
 
+ENV PORT=9000
+ENV MONGO_URL=""
+
 CMD ["node", "src/index.js"]

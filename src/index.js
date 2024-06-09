@@ -6,7 +6,9 @@ const CryptoUtil = require("./utils");
 const app = express();
 const port = process.env.PORT;
 
-const client = new MongoClient("mongodb://mongo:27017/AuthifyJS");
+const mongoUrl = proces.env.MONGO_URL;
+
+const client = new MongoClient(mongoUrl);
 
 const cryptoUtil = new CryptoUtil();
 
