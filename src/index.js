@@ -4,7 +4,7 @@ const MongoClient = require("mongodb");
 const CryptoUtil = require("./utils");
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT;
 
 const url = "mongodb://localhost:27017";
 const client = new MongoClient(url);
@@ -12,7 +12,7 @@ const dbName = "AuthifyJS";
 
 const cryptoUtil = new CryptoUtil();
 
-async function connectToMongoDBServer() {
+const connectToMongoDBServer = async () => {
     try {
         await client.connect();
         return client.db(dbName).collection("users");
@@ -25,7 +25,7 @@ async function connectToMongoDBServer() {
 let collection;
 connectToMongoDBServer().then((col) => {
     collection = col;
-})
+});
 
 app.use(express.json());
 
@@ -58,7 +58,7 @@ app.post("/signup", async (req, res) => {
         console.error(error);
         res.status(500).json({ error: "Internal Serer Error" });
     }
-})
+});
 
 app.post("/login", async (req, res) => {
     try {
@@ -86,7 +86,7 @@ app.post("/login", async (req, res) => {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error "});
     }
-})
+});
 
 app.post("/forward", async (req, res) => {
     try {
@@ -126,7 +126,29 @@ app.post("/forward", async (req, res) => {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error "});
     }
-})
+});
+
+app.post("/change_password", async (req, res) => {
+    try {
+        const token = req.body.token;
+        const newPassword = req.body.newPassword;
+
+        const existingUser = await collection.findOne({ token });
+
+        if (!existingUser) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        const newPasswordHash = cryptoUtil.getPasswordHash(newPassword);        
+
+        await collection.updateOne({ token }, { $set: { passwordHash: newPasswordHash }});
+
+        res.sendStatus(200);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error "});
+    }
+});
 
 app.listen(port, async () => {
     console.log(`Listening on port ${port}`);
