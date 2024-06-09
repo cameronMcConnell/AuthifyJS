@@ -1,9 +1,9 @@
 const crypto = require("crypto");
 
 class CryptoUtil {
-    generateUniqueKey(username, password) {
+    getPasswordHash(password) {
         const hash = crypto.createHash("sha256");
-        hash.update(username + password);
+        hash.update(password);
         return hash.digest("hex");
     }
 

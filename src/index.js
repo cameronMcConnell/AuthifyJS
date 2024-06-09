@@ -12,16 +12,79 @@ const dbName = "AuthifyJS";
 
 const cryptoUtil = new CryptoUtil();
 
-app.post("/signup", async (req, res) => {
-    const userHash = cryptoUtil.generateUniqueKey(
-        req.body["username"], req.body["password"]
-    )
+async function connectToMongoDBServer() {
+    try {
+        await client.connect();
+        return client.db(dbName).collection("users");
+    } catch (error) {
+        console.error(error);
+        process.exit(1);
+    }
+}
 
+const collection = connectToMongoDBServer();
+
+app.post("/signup", async (req, res) => {
+    try {
+        const username = req.body.username;
+        const password = req.body.password;
+
+        const existingUser = await collection.findOne({ username });
+
+        if (existingUser) {
+            res.status(409).json({ error: "Username already exists" });
+        }
+
+        const passwordHash = cryptoUtil.getPasswordHash(password);
+
+        const token = cryptoUtil.generateRandomToken();
+
+        const user = {
+            username,
+            passwordHash,
+            token,
+            data: req.body["data"]
+        }
+
+        await collection.insert(user);
+
+        res.status(201).json({ token });
+    } 
     
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Serer Error" });
+    }
 })
 
 app.post("/login", async (req, res) => {
+    try {
+        const username = req.body.username;
+        const password = req.body.password;
 
+        const user = await collection.findOne({ username });
+
+        if (!user) {
+            res.status(404).json({ error: "User not found" });
+        }
+
+        const passwordHash = cryptoUtil.getPasswordHash(password);
+
+        if (passwordHash !== user.passwordHash) {
+            res.status(401).json({ error: "Invalid password" });
+        }
+
+        const token = cryptoUtil.generateRandomToken();
+
+        await collection.updateOne({ username }, { $set: { token }});
+
+        res.status(200).json({ token });
+    } 
+    
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error "});
+    }
 })
 
 app.post("/forward", async (req, res) => {
@@ -31,8 +94,5 @@ app.post("/forward", async (req, res) => {
 app.use(express.json());
 
 app.listen(port, async () => {
-    await client.connect();
-    const db = client.db(dbName);
-    const collection = db.collection("users");
     console.log(`Listening on port ${port}`);
 })
