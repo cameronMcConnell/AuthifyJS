@@ -14,5 +14,6 @@ EXPOSE 9000
 
 ENV PORT=9000
 ENV MONGO_URL=""
+ENV DB_NAME=""
 
 CMD ["node", "src/index.js"]

@@ -15,7 +15,7 @@ const cryptoUtil = new CryptoUtil();
 const connectToMongoDBServer = async () => {
     try {
         await client.connect();
-        return client.db("AuthifyJS").collection("users");
+        return client.db(process.env.DB_NAME).collection("users");
     } catch (error) {
         console.error(error);
         process.exit(1);
