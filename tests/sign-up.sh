@@ -1,4 +1,4 @@
-curl -X POST http://localhost:3000/signup -H "Content-Type: application/json" -d '{
+curl -X POST http://localhost:9000/signup -H "Content-Type: application/json" -d '{
     "username": "testuser",
     "password": "password123",
     "data": {
