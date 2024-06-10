@@ -6,11 +6,13 @@ const CryptoUtil = require("./utils");
 const app = express();
 const port = process.env.PORT;
 
-const mongoUrl = proces.env.MONGO_URL;
+const mongoUrl = process.env.MONGO_URL;
 
 const client = new MongoClient(mongoUrl);
 
 const cryptoUtil = new CryptoUtil();
+
+let collection;
 
 const connectToMongoDBServer = async () => {
     try {
@@ -22,18 +24,23 @@ const connectToMongoDBServer = async () => {
     }
 }
 
-let collection;
-connectToMongoDBServer().then((col) => {
-    collection = col;
-    console.log("Connected to collection users");
-});
+const ensureDBConnection = async (req, res, next) => {
+    if (!collection) {
+        await connectToMongoDBServer();
+    }
+    next();
+};
 
 app.use(express.json());
+app.use(ensureDBConnection);
 
 app.post("/signup", async (req, res) => {
     try {
-        const username = req.body.username;
-        const password = req.body.password;
+        const { username, password } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
 
         const existingUser = await collection.findOne({ username });
 
@@ -63,8 +70,11 @@ app.post("/signup", async (req, res) => {
 
 app.post("/login", async (req, res) => {
     try {
-        const username = req.body.username;
-        const password = req.body.password;
+        const { username, password } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
 
         const user = await collection.findOne({ username });
 
@@ -89,12 +99,13 @@ app.post("/login", async (req, res) => {
     }
 });
 
-app.post("/forward", async (req, res) => {
+app.post("/forward_request", async (req, res) => {
     try {
-        const token = req.body.token;
-        const url = req.body.url;
-        const method = req.body.method;
-        const data = req.body.data;
+        const { token, url, method, data } = req.body;
+
+        if (!token || !url || !method || !data) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
 
         const existingUser = await collection.findOne({ token });
 
@@ -129,10 +140,13 @@ app.post("/forward", async (req, res) => {
     }
 });
 
-app.post("/change_password", async (req, res) => {
+app.post("/update_password", async (req, res) => {
     try {
-        const token = req.body.token;
-        const newPassword = req.body.newPassword;
+        const { token, newPassword } = req.body;
+        
+        if (!token || !newPassword) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
 
         const existingUser = await collection.findOne({ token });
 
@@ -142,15 +156,127 @@ app.post("/change_password", async (req, res) => {
 
         const newPasswordHash = cryptoUtil.getPasswordHash(newPassword);        
 
-        await collection.updateOne({ token }, { $set: { passwordHash: newPasswordHash }});
+        await collection.updateOne({ token }, { $set: { passwordHash: newPasswordHash } });
 
         res.sendStatus(200);
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "Internal Server Error "});
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-app.listen(port, async () => {
-    console.log(`Listening on port ${port}`);
+app.post("/delete_user", async (req, res) => {
+    try {
+        const { token, username } = req.body;
+
+        if (!token || !username) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+
+        const existingUser = await collection.findOne({ token });
+
+        if (!existingUser) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        await collection.deleteOne({ token });
+
+        return res.sendStatus(200);
+    } catch(error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
 });
+
+app.post("/update_user_data", async (req, res) => {
+    try {
+        const { token, data } = req.body;
+
+        if (!token || !data) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+
+        const existingUser = await collection.findOne({ token });
+
+        if (!existingUser) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        await collection.updateOne({ token }, { $set: { data } });
+
+        res.sendStatus(200);
+    } catch(error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+})
+
+app.post("/admin/delete_user", async (req, res) => {
+    try {
+        const { adminKey, username } = req.body;
+
+        if (!adminKey || !username) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+        else if (adminKey != process.env.ADMIN_KEY) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        await collection.deleteOne({ username });
+
+        res.sendStatus(200);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+
+});
+
+app.post("/admin/get_users", async (req, res) => {
+    try {
+        const { adminKey } = req.body;
+
+        if (!adminKey) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+        else if (adminKey != process.env.ADMIN_KEY) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        const users = await collection.find({}).toArray();
+
+        res.status(200).json({ users });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+})
+
+app.post("/admin/update_user_data", async (req, res) => {
+    try {
+        const { adminKey, username, data } = req.body;
+
+        if (!adminKey || !data) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+        else if (adminKey != process.env.ADMIN_KEY) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        await collection.updateOne({ username }, { $set: { data } });
+
+        res.sendStatus(200);
+    } catch(error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+})
+
+const startServer = async () => {
+    await connectToMongoDBServer();
+    app.listen(port, () => {
+        console.log(`Listening on port ${port}`);
+    });
+};
+
+startServer();
