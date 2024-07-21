@@ -145,7 +145,7 @@ app.post("/verify", async (req, res) => {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const unverifiedUser = unverifiedUsersCollection.findOne({ username });
+        const unverifiedUser = await unverifiedUsersCollection.findOne({ username });
 
         if (!unverifiedUser) {
             return res.status(404).json({ error: "User not found" });
@@ -158,17 +158,21 @@ app.post("/verify", async (req, res) => {
         }
 
         if (verificationCode === unverifiedUser.verificationCode) {
+            const token = cryptoUtil.generateRandomToken();
+
             const user = {
                 username: unverifiedUser.userName,
                 passwordHash: unverifiedUser.passwordHash,
                 email: unverifiedUser.email,
+                data: {},
+                token
             }
 
             await usersCollection.insertOne(user);
 
             await unverifiedUsersCollection.deleteOne({ username });
 
-            res.status(200).json({ message: "User verified successfully" });
+            res.status(200).json({ message: "User verified successfully", data: {}, token });
         }
         else {
             res.status(401).json({ error: "Invalid verification code" });
@@ -177,7 +181,41 @@ app.post("/verify", async (req, res) => {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error" });
     }
-})
+});
+
+app.post("/new_verification_code", async (req, res) => {
+    try {
+        const { username, password, email } = req.body;
+
+        if (!username || !password || !email) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+
+        const unverifiedUser = await unverifiedUsersCollection.findOne({ username });
+
+        if (!unverifiedUser) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        const passwordHash = cryptoUtil.getPasswordHash(password);
+
+        if (passwordHash === unverifiedUser.passwordHash) {
+            const verificationCode = cryptoUtil.generateVerificationCode();
+                
+            await unverifiedUsersCollection.updateOne({ username }, { $set: { verificationCode } })
+                
+            await sendEmailVerification(username, email, verificationCode);
+
+            res.sendStatus(200);
+        }
+        else {
+            return res.status(401).json({ error: "Invalid password" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
 
 app.post("/login", async (req, res) => {
     try {
@@ -222,7 +260,7 @@ app.post("/login", async (req, res) => {
 
         await usersCollection.updateOne({ username }, { $set: { token }});
 
-        res.status(200).json({ message: "Login successful", token });
+        res.status(200).json({ message: "Login successful", data: verifiedUser.data, token });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error "});
@@ -237,9 +275,9 @@ app.post("/forward_request", async (req, res) => {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const existingUser = await collection.findOne({ token });
+        const verifiedUser = await usersCollection.findOne({ token });
 
-        if (!existingUser) {
+        if (!verifiedUser) {
             return res.status(401).json({ error: "Unauthorized access" });
         }
 
@@ -278,15 +316,15 @@ app.post("/update_password", async (req, res) => {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const existingUser = await collection.findOne({ token });
+        const verifiedUser = await usersCollection.findOne({ token });
 
-        if (!existingUser) {
+        if (!verifiedUser) {
             return res.status(401).json({ error: "Unauthorized access" });
         }
 
         const newPasswordHash = cryptoUtil.getPasswordHash(newPassword);        
 
-        await collection.updateOne({ token }, { $set: { passwordHash: newPasswordHash } });
+        await usersCollection.updateOne({ token }, { $set: { passwordHash: newPasswordHash } });
 
         res.sendStatus(200);
     } catch (error) {
@@ -303,13 +341,13 @@ app.post("/delete_user", async (req, res) => {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const existingUser = await collection.findOne({ token });
+        const verifiedUser = await usersCollection.findOne({ token });
 
-        if (!existingUser) {
+        if (!verifiedUser) {
             return res.status(401).json({ error: "Unauthorized access" });
         }
 
-        await collection.deleteOne({ token });
+        await usersCollection.deleteOne({ token });
 
         return res.sendStatus(200);
     } catch(error) {
@@ -326,33 +364,54 @@ app.post("/update_user_data", async (req, res) => {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const existingUser = await collection.findOne({ token });
+        const verifiedUser = await usersCollection.findOne({ token });
 
-        if (!existingUser) {
+        if (!verifiedUser) {
             return res.status(401).json({ error: "Unauthorized access" });
         }
 
-        await collection.updateOne({ token }, { $set: { data } });
+        await usersCollection.updateOne({ token }, { $set: { data } });
 
         res.sendStatus(200);
     } catch(error) {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error" });
     }
-})
+});
 
 app.post("/admin/delete_user", async (req, res) => {
     try {
-        const { adminKey, username } = req.body;
+        const { adminKey, usernames } = req.body;
 
-        if (!adminKey || !username) {
+        if (!adminKey || !usernames) {
             return res.status(400).json({ error: "Bad Request" });
         }
         else if (adminKey != process.env.ADMIN_KEY) {
             return res.status(401).json({ error: "Unauthorized access" });
         }
 
-        await collection.deleteOne({ username });
+        await usersCollection.deleteMany({ username: { $in: usernames } });
+
+        res.sendStatus(200);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+
+});
+
+app.post("/admin/delete_unverified_users", async (req, res) => {
+    try {
+        const { adminKey, usernames } = req.body;
+
+        if (!adminKey || !usernames) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+        else if (adminKey != process.env.ADMIN_KEY) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        await unverifiedUsersCollection.deleteMany({ username: { $in: usernames } });
 
         res.sendStatus(200);
     } catch (error) {
@@ -373,14 +432,34 @@ app.post("/admin/get_users", async (req, res) => {
             return res.status(401).json({ error: "Unauthorized access" });
         }
 
-        const users = await collection.find({}).toArray();
+        const users = await usersCollection.find({}).toArray();
 
         res.status(200).json({ users });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error" });
     }
-})
+});
+
+app.post("/admin/get_unverified_users", async (req, res) => {
+    try {
+        const { adminKey } = req.body;
+
+        if (!adminKey) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+        else if (adminKey != process.env.ADMIN_KEY) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+
+        const users = await unverifiedUsersCollection.find({}).toArray();
+
+        res.status(200).json({ users });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
 
 app.post("/admin/update_user_data", async (req, res) => {
     try {
@@ -400,7 +479,7 @@ app.post("/admin/update_user_data", async (req, res) => {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error" });
     }
-})
+});
 
 const startServer = async () => {
     await connectToMongoDBServer();
