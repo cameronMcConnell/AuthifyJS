@@ -2,6 +2,15 @@ const express = require("express");
 const axios = require("axios");
 const { MongoClient } = require("mongodb");
 const CryptoUtil = require("./utils");
+const AWS = require("aws-sdk");
+
+AWS.config.update({
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    region: process.env.AWS_REGION,
+});
+
+const ses = new AWS.SES();
 
 const app = express();
 const port = process.env.PORT;
@@ -12,12 +21,13 @@ const client = new MongoClient(mongoUrl);
 
 const cryptoUtil = new CryptoUtil();
 
-let collection;
+let usersCollection, unverifiedUsersCollection;
 
 const connectToMongoDBServer = async () => {
     try {
         await client.connect();
-        return client.db(process.env.DB_NAME).collection("users");
+        usersCollection = client.db(process.env.DB_NAME).collection("users");
+        unverifiedUsersCollection = client.db(process.env.DB_NAME).collection("unverifiedUsers");
     } catch (error) {
         console.error(error);
         process.exit(1);
@@ -34,15 +44,53 @@ const ensureDBConnection = async (req, res, next) => {
 app.use(express.json());
 app.use(ensureDBConnection);
 
+const sendEmailVerification = async (username, userEmail, verificationCode) => {
+    const params = {
+        Destination: {
+            ToAddresses: [userEmail]
+        },
+        Message: {
+            Subject: {
+                Data: `Your Verification Code for ${process.env.SERVICE_NAME}`,
+                Charset: "UTF-8",
+            },
+            Body: {
+                Text: {
+                    Data: `Dear ${username},
+
+                    Thank you for registering with ${process.env.SERVICE_NAME}! To complete your registration, please use the following verification code:
+
+                    Your Verification Code: ${verificationCode}
+
+                    Please enter this code in the verification field on our website to activate your account.
+
+                    If you did not sign up for an account with ${process.env.SERVICE_NAME}, please ignore this email.
+
+                    Thank you,
+                    The ${process.env.SERVICE_NAME} Team`
+                },
+                Charset: "UTF-8",
+            }
+        },
+        Source: process.env.SES_VERIFIED_EMAIL,
+    }
+
+    try {
+        await ses.sendEmail(params).promise();
+    } catch (error) {
+        throw error;
+    }
+}
+
 app.post("/signup", async (req, res) => {
     try {
-        const { username, password } = req.body;
+        const { username, password, email } = req.body;
 
         if (!username || !password) {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const existingUser = await collection.findOne({ username });
+        const existingUser = await usersCollection.findOne({ username });
 
         if (existingUser) {
             return res.status(409).json({ error: "Username already exists" });
@@ -50,21 +98,23 @@ app.post("/signup", async (req, res) => {
 
         const passwordHash = cryptoUtil.getPasswordHash(password);
 
-        const token = cryptoUtil.generateRandomToken();
+        const verificationCode = cryptoUtil.generateVerificationCode();
 
         const user = {
             username,
             passwordHash,
-            token,
-            data: req.body.data
+            verificationCode,
+            email
         }
 
-        await collection.insertOne(user);
+        await sendEmailVerification(username, email, verificationCode);
 
-        res.status(201).json({ token });
+        await unverifiedUsersCollection.insertOne(user);
+
+        res.status(201);
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: "Internal Serer Error" });
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
