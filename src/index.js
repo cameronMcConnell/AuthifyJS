@@ -86,13 +86,32 @@ app.post("/signup", async (req, res) => {
     try {
         const { username, password, email } = req.body;
 
-        if (!username || !password) {
+        if (!username || !password || !email) {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const existingUser = await usersCollection.findOne({ username });
+        const unverifiedUser = await unverifiedUsersCollection.findOne({ username });
 
-        if (existingUser) {
+        if (unverifiedUser) {
+            const passwordHash = cryptoUtil.getPasswordHash(password);
+            
+            if (passwordHash === unverifiedUser.passwordHash) {
+                const verificationCode = cryptoUtil.generateVerificationCode();
+                
+                await unverifiedUsersCollection.updateOne({ username }, { $set: { verificationCode } })
+                
+                await sendEmailVerification(username, email, verificationCode);
+
+                return res.status(403).json({ error: "User not verified", verify: true });
+            }
+            else {
+                return res.status(409).json({ error: "Username already exists" });
+            }
+        }
+
+        const verifiedUser = await usersCollection.findOne({ username });
+
+        if (verifiedUser) {
             return res.status(409).json({ error: "Username already exists" });
         }
 
@@ -111,12 +130,54 @@ app.post("/signup", async (req, res) => {
 
         await unverifiedUsersCollection.insertOne(user);
 
-        res.status(201);
+        res.status(201).json({ message: "Verification email sent" });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
+app.post("/verify", async (req, res) => {
+    try {
+        const { username, password, verificationCode } = req.body;
+
+        if (!username || !password || !verificationCode) {
+            return res.status(400).json({ error: "Bad Request" });
+        }
+
+        const unverifiedUser = unverifiedUsersCollection.findOne({ username });
+
+        if (!unverifiedUser) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        const passwordHash = cryptoUtil.getPasswordHash(password);
+
+        if (passwordHash !== unverifiedUser.passwordHash) {
+            return res.status(401).json({ error: "Invalid password" });
+        }
+
+        if (verificationCode === unverifiedUser.verificationCode) {
+            const user = {
+                username: unverifiedUser.userName,
+                passwordHash: unverifiedUser.passwordHash,
+                email: unverifiedUser.email,
+            }
+
+            await usersCollection.insertOne(user);
+
+            await unverifiedUsersCollection.deleteOne({ username });
+
+            res.status(200).json({ message: "User verified successfully" });
+        }
+        else {
+            res.status(401).json({ error: "Invalid verification code" });
+        }
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+})
 
 app.post("/login", async (req, res) => {
     try {
@@ -126,23 +187,42 @@ app.post("/login", async (req, res) => {
             return res.status(400).json({ error: "Bad Request" });
         }
 
-        const user = await collection.findOne({ username });
+        const unverifiedUser = await unverifiedUsersCollection.findOne({ username });
 
-        if (!user) {
+        if (unverifiedUser) {
+            const passwordHash = cryptoUtil.getPasswordHash(password);
+            
+            if (passwordHash === unverifiedUser.passwordHash) {
+                const verificationCode = cryptoUtil.generateVerificationCode();
+                
+                await unverifiedUsersCollection.updateOne({ username }, { $set: { verificationCode } })
+                
+                await sendEmailVerification(username, email, verificationCode);
+
+                return res.status(403).json({ error: "User not verified", verify: true });
+            }
+            else {
+                return res.status(409).json({ error: "Username already exists" });
+            }
+        }
+
+        const verifiedUser = await usersCollection.findOne({ username });
+
+        if (!verifiedUser) {
             return res.status(404).json({ error: "User not found" });
         }
 
         const passwordHash = cryptoUtil.getPasswordHash(password);
 
-        if (passwordHash !== user.passwordHash) {
+        if (passwordHash !== verifiedUser.passwordHash) {
             return res.status(401).json({ error: "Invalid password" });
         }
 
         const token = cryptoUtil.generateRandomToken();
 
-        await collection.updateOne({ username }, { $set: { token }});
+        await usersCollection.updateOne({ username }, { $set: { token }});
 
-        res.status(200).json({ token });
+        res.status(200).json({ message: "Login successful", token });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Internal Server Error "});
